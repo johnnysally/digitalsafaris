@@ -6,6 +6,16 @@ export type AccountStatus = "active" | "pending" | "suspended" | "rejected";
 
 export type PartnerType = "accommodation" | "restaurant" | "transport";
 
+export type PropertyType =
+  | "hotel"
+  | "lodge"
+  | "camp"
+  | "resort"
+  | "bnb"
+  | "guesthouse"
+  | "villa"
+  | "apartment";
+
 export type BookingStatus =
   | "pending"
   | "confirmed"
@@ -56,6 +66,8 @@ export type PaymentStatus =
   | "failed"
   | "refunded"
   | "cancelled";
+
+export type BookingPaymentStatus = "pending" | "paid" | "refunded" | "failed";
 
 export type PaymentMethodName = "mpesa" | "stripe" | "wallet";
 
@@ -165,11 +177,77 @@ export interface LegalDocument {
   updatedAt: ISODate;
 }
 
+/* ------------------------------------------------------------------ */
+/* Property search                                                     */
+/* ------------------------------------------------------------------ */
+
+export interface PropertyPartner {
+  _id: ID;
+  name: string;
+  logo?: string | null;
+  town?: string;
+  type?: string;
+}
+
+export interface Property {
+  _id: ID;
+  name: string;
+  slug: string;
+  description?: string;
+  type: PropertyType;
+  town: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  images: string[];
+  amenities?: string[];
+  coverImage: string | null;
+  rating: number;
+  totalRatings: number;
+  isFeatured: boolean;
+  checkInTime: string;
+  checkOutTime: string;
+  partner: PropertyPartner | null;
+  minPrice: number | null;
+  maxPrice: number | null;
+  currency: string;
+  roomTypes: number;
+  roomUnits: number;
+}
+
+export interface PropertyRoom {
+  _id: ID;
+  partner: ID;
+  property: ID;
+  name: string;
+  description?: string;
+  type: string;
+  capacity: number;
+  beds: Array<{ type: string; count: number }>;
+  sizeSqm?: number | null;
+  images?: string[];
+  amenities?: string[];
+  basePrice: number;
+  currency: string;
+  weekendPrice?: number | null;
+  totalUnits: number;
+  status: string;
+  isFeatured?: boolean;
+}
+
+export interface PropertyDetails {
+  property: Property & { rooms: PropertyRoom[] };
+}
+
 export interface SearchResponse {
   restaurants: Restaurant[];
-  accommodations: Accommodation[];
+  accommodations: Property[];
   properties: Property[];
 }
+
+/* ------------------------------------------------------------------ */
+/* Customer preferences / addresses / payments                        */
+/* ------------------------------------------------------------------ */
 
 export interface CustomerPreferences {
   _id: ID;
@@ -241,6 +319,10 @@ export interface CustomerPayment {
   updatedAt: ISODate;
 }
 
+/* ------------------------------------------------------------------ */
+/* Restaurant / food                                                   */
+/* ------------------------------------------------------------------ */
+
 export interface MenuItem {
   _id: ID;
   restaurant: ID;
@@ -255,6 +337,7 @@ export interface MenuItem {
   ingredients?: string[];
   allergens?: string[];
   dietary?: string[];
+  category?: string | null;
   isAvailable: boolean;
   isFeatured: boolean;
   status: "active" | "inactive";
@@ -303,27 +386,40 @@ export interface RestaurantDetail extends Restaurant {
   menuItems?: MenuItem[];
 }
 
-export interface Property {
+export interface RestaurantDetails {
+  restaurant: Restaurant;
+  menu: MenuItem[];
+}
+
+/* ------------------------------------------------------------------ */
+/* Accommodation partner (kept for compatibility)                     */
+/* ------------------------------------------------------------------ */
+
+export interface Accommodation {
   _id: ID;
-  partner: ID;
   name: string;
   slug: string;
+  email: string;
+  phone: string;
+  logo?: string | null;
+  coverImage?: string | null;
   description?: string;
   type: string;
   town: string;
   address: string;
   latitude: number;
   longitude: number;
-  images?: string[];
   amenities?: string[];
-  rules?: string[];
   checkInTime: string;
   checkOutTime: string;
-  totalRooms: number;
-  status: string;
-  isFeatured: boolean;
   rating: number;
   totalRatings: number;
+  status: string;
+}
+
+export interface AccommodationDetail extends Accommodation {
+  properties?: Property[];
+  rooms?: Room[];
 }
 
 export interface Room {
@@ -358,47 +454,44 @@ export interface RoomAvailability {
   isBlocked: boolean;
 }
 
-export interface Accommodation {
+/* ------------------------------------------------------------------ */
+/* Bookings / orders / trips                                          */
+/* ------------------------------------------------------------------ */
+
+export interface BookingRoomUnit {
   _id: ID;
-  name: string;
-  slug: string;
-  email: string;
-  phone: string;
-  logo?: string | null;
-  coverImage?: string | null;
-  description?: string;
-  type: string;
-  town: string;
-  address: string;
-  latitude: number;
-  longitude: number;
-  amenities?: string[];
-  checkInTime: string;
-  checkOutTime: string;
-  rating: number;
-  totalRatings: number;
-  status: string;
+  number: string;
+  floor?: string | null;
 }
 
-export interface AccommodationDetail extends Accommodation {
-  properties?: Property[];
-  rooms?: Room[];
+export interface BookingPropertySummary {
+  _id: ID;
+  name: string;
+  images?: string[];
+  town?: string;
+  address?: string;
+}
+
+export interface BookingRoomSummary {
+  _id: ID;
+  name: string;
+  type?: string;
+  basePrice?: number;
+  images?: string[];
 }
 
 export interface Booking {
   _id: ID;
   reference: string;
   customer: ID;
-  partner: ID;
-  property: ID;
-  room: ID;
+  partner: ID | { _id: ID } | null;
+  property: ID | BookingPropertySummary;
+  room: ID | BookingRoomSummary;
+  roomUnit?: BookingRoomUnit | null;
   checkIn: ISODate;
   checkOut: ISODate;
   nights: number;
-  guests: {
-    adults: number;
-    children: number;
-  };
+  guests: { adults: number; children: number };
   roomsBooked: number;
   pricePerNight: number;
   subtotal: number;
@@ -408,10 +501,17 @@ export interface Booking {
   total: number;
   currency: string;
   paymentMethod: PaymentMethodName;
-  paymentStatus: PaymentStatus;
+  paymentStatus?: BookingPaymentStatus;
+  paymentReference?: string | null;
   status: BookingStatus;
   qrCode?: string | null;
   specialRequests?: string | null;
+  confirmedAt?: ISODate | null;
+  checkedInAt?: ISODate | null;
+  checkedOutAt?: ISODate | null;
+  cancelledAt?: ISODate | null;
+  cancelledBy?: "customer" | "partner" | "admin" | null;
+  cancellationReason?: string | null;
   createdAt: ISODate;
   updatedAt: ISODate;
   propertyName?: string;
@@ -442,16 +542,41 @@ export interface Order {
   currency: string;
   paymentMethod: PaymentMethodName;
   paymentStatus: PaymentStatus;
+  paymentReference?: string | null;
   deliveryAddress?: Address | null;
   deliveryMethod?: "manual" | "ds_transport" | null;
   deliveryJob?: ID | null;
   orderType: "direct" | "broadcast";
   status: OrderStatus;
   customerNotes?: string | null;
+  restaurantNotes?: string | null;
+  acceptedAt?: ISODate | null;
+  preparedAt?: ISODate | null;
+  outForDeliveryAt?: ISODate | null;
+  deliveredAt?: ISODate | null;
+  completedAt?: ISODate | null;
+  cancelledAt?: ISODate | null;
+  cancelledBy?: "customer" | "restaurant" | "admin" | null;
+  cancellationReason?: string | null;
   createdAt: ISODate;
   updatedAt: ISODate;
   restaurantName?: string;
   restaurantLogo?: string | null;
+}
+
+export interface OrderQuoteResponse {
+  quoteId: string;
+  expiresAt: ISODate;
+  restaurantId: ID;
+  type: "delivery" | "pickup";
+  items: OrderItem[];
+  subtotal: number;
+  deliveryFee: number;
+  total: number;
+  currency: string;
+  commissionRate: number;
+  commissionAmount: number;
+  partnerEarnings: number;
 }
 
 export interface DineInBooking {
@@ -515,10 +640,14 @@ export interface Trip {
   currency: string;
   paymentMethod: PaymentMethodName;
   paymentStatus: PaymentStatus;
+  paymentReference?: string | null;
   status: TripStatus;
   notes?: string | null;
   rating?: number | null;
   review?: string | null;
+  cancelledAt?: ISODate | null;
+  cancelledBy?: string | null;
+  cancellationReason?: string | null;
   createdAt: ISODate;
   updatedAt: ISODate;
   driverName?: string;
@@ -623,12 +752,36 @@ export interface PaymentMethodPublic {
   usedFor: string[];
 }
 
+export type DownloadPlatform =
+  | "windows"
+  | "macos"
+  | "linux"
+  | "android"
+  | "ios"
+  | "web"
+  | "other";
+
+export interface PublicDownload {
+  _id: ID;
+  name: string;
+  platform: DownloadPlatform;
+  architecture: string;
+  version: string;
+  size: string;
+  url: string;
+  minimumOs?: string | null;
+  checksum?: string | null;
+  releaseNotes?: string | null;
+  createdAt: ISODate;
+}
+
 export interface SitePayload {
   branding: Branding;
   general: GeneralSettings;
   broadcast: BroadcastSettings;
   paymentMethods: PaymentMethodPublic[];
   locations: Location[];
+  downloads?: PublicDownload[];
 }
 
 export interface AuthTokens {
@@ -660,6 +813,10 @@ export interface ConfirmTopUpResponse {
   balance: number;
 }
 
+/* ------------------------------------------------------------------ */
+/* Search params                                                      */
+/* ------------------------------------------------------------------ */
+
 export interface SearchRestaurantsParams extends ListParams {
   town?: string;
   cuisine?: string;
@@ -668,12 +825,26 @@ export interface SearchRestaurantsParams extends ListParams {
 export interface SearchAccommodationsParams extends ListParams {
   town?: string;
   type?: string;
+  featured?: boolean;
+}
+
+export interface SearchPropertiesParams extends ListParams {
+  q?: string;
+  town?: string;
+  type?: string;
+  partner?: ID;
+  featured?: boolean;
 }
 
 export interface TripQuoteResponse {
+  quoteId: string;
+  expiresAt: ISODate;
   distanceKm: number;
   fare: number;
   currency: string;
+  commissionRate: number;
+  commissionAmount: number;
+  partnerEarnings: number;
 }
 
 export interface AiChatResponse {
