@@ -889,6 +889,8 @@ export interface TrackingLocation {
   latitude: number;
   longitude: number;
   lastPingAt: ISODate;
+  heading?: number | null;
+  speed?: number | null;
 }
 
 export interface TrackTripResponse {
@@ -898,6 +900,8 @@ export interface TrackTripResponse {
     pickup: Address;
     dropoff: Address;
     startedAt?: ISODate | null;
+    distanceKm?: number;
+    durationMinutes?: number;
     driver?: TrackingDriver | null;
     vehicle?: TrackingVehicle | null;
   };
@@ -973,7 +977,10 @@ export interface SocketEventMap {
     longitude: number;
     heading?: number;
     speed?: number;
+    lastPingAt?: ISODate;
   };
+  "trip:tracking-ready": { reference: string };
+  "trip:tracking-error": { reference: string; message: string };
   "broadcast:expired": { reference: string };
 }
 

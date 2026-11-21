@@ -4,11 +4,10 @@ import {
   ArrowRight,
   Bed,
   Car,
-  ChevronRight,
   CreditCard,
   MapPin,
   Search,
-  ShieldCheck,
+  MessageCircle,
   Star,
   Utensils,
 } from "lucide-react";
@@ -41,17 +40,12 @@ const SERVICES = [
   { title: "Payments", icon: CreditCard, to: ROUTES.PAYMENT },
 ];
 
-const QUICK_ACTIONS = [
-  { title: "Book Accommodation", icon: Bed, to: ROUTES.ACCOMMODATION },
-  { title: "Order Food", icon: Utensils, to: ROUTES.RESTAURANT },
-  { title: "Find Transport", icon: Car, to: ROUTES.TRANSPORT },
-];
-
 interface FeaturedListing {
   id: string;
   title: string;
   location: string;
   category: string;
+  kind: "accommodation" | "restaurant";
   rating: number;
   totalRatings: number;
   image?: string | null;
@@ -74,6 +68,11 @@ interface DashboardData {
     properties: number;
     restaurants: number;
   };
+}
+
+interface CustomerLocation {
+  latitude: number;
+  longitude: number;
 }
 
 const EMPTY_DASHBOARD: DashboardData = {
@@ -133,9 +132,16 @@ export default function Home() {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [dashboard, setDashboard] = useState<DashboardData>(EMPTY_DASHBOARD);
+  const [roomPricing, setRoomPricing] = useState<
+    Record<string, { price: number; currency: string }>
+  >({});
   const [loading, setLoading] = useState(true);
   const [failedSections, setFailedSections] = useState<string[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
+  const [customerLocation, setCustomerLocation] =
+    useState<CustomerLocation | null>(null);
+  const [locatingCustomer, setLocatingCustomer] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -231,17 +237,76 @@ export default function Home() {
     };
   }, [reloadKey]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const propertiesMissingPrice = dashboard.properties
+      .filter((property) => property.minPrice == null)
+      .slice(0, 8);
+
+    if (propertiesMissingPrice.length === 0) return;
+
+    const loadRoomPricing = async () => {
+      const results = await Promise.allSettled(
+        propertiesMissingPrice.map((property) =>
+          searchApi.propertyDetails(property.slug || property._id),
+        ),
+      );
+      if (cancelled) return;
+
+      const prices: Record<string, { price: number; currency: string }> = {};
+      results.forEach((result, index) => {
+        if (result.status !== "fulfilled") return;
+
+        const property = propertiesMissingPrice[index];
+        const rooms = result.value.property.rooms ?? [];
+        const preferredCurrency =
+          property.currency &&
+          rooms.some((room) => room.currency === property.currency)
+            ? property.currency
+            : rooms[0]?.currency || property.currency || "KES";
+        const pricedRooms = rooms.filter(
+          (room) =>
+            room.currency === preferredCurrency &&
+            Number.isFinite(room.basePrice) &&
+            room.basePrice >= 0,
+        );
+        const lowestRoomPrice = pricedRooms.reduce<
+          (typeof pricedRooms)[number] | undefined
+        >(
+          (lowest, room) =>
+            !lowest || room.basePrice < lowest.basePrice ? room : lowest,
+          undefined,
+        );
+
+        if (lowestRoomPrice) {
+          prices[property._id] = {
+            price: lowestRoomPrice.basePrice,
+            currency: lowestRoomPrice.currency,
+          };
+        }
+      });
+
+      setRoomPricing((current) => ({ ...current, ...prices }));
+    };
+
+    void loadRoomPricing();
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboard.properties]);
+
   const featured = useMemo<FeaturedListing[]>(() => {
     const fromProperties = dashboard.properties.map((item) => ({
       id: item._id,
       title: item.name,
       location: item.town,
       category: item.type,
+      kind: "accommodation" as const,
       rating: numberOrZero(item.rating),
       totalRatings: numberOrZero(item.totalRatings),
       image: item.coverImage || item.images?.[0],
-      price: item.minPrice ?? undefined,
-      currency: item.currency,
+      price: item.minPrice ?? roomPricing[item._id]?.price,
+      currency: item.currency || roomPricing[item._id]?.currency,
       to: `/accommodation/${item.slug || item._id}`,
     }));
 
@@ -250,6 +315,7 @@ export default function Home() {
       title: item.name,
       location: item.town,
       category: item.cuisineTypes?.[0] || "Restaurant",
+      kind: "restaurant" as const,
       rating: numberOrZero(item.rating),
       totalRatings: numberOrZero(item.totalRatings),
       image: item.coverImage || item.logo,
@@ -263,7 +329,7 @@ export default function Home() {
           right.totalRatings - left.totalRatings,
       )
       .slice(0, 8);
-  }, [dashboard.properties, dashboard.restaurants]);
+  }, [dashboard.properties, dashboard.restaurants, roomPricing]);
 
   const destinations = useMemo(
     () =>
@@ -351,29 +417,19 @@ export default function Home() {
       : "Wallet balance unavailable",
   };
 
-  const serviceImage = (title: string): string | undefined => {
-    if (title === "Accommodation") {
-      return (
-        dashboard.properties.find(
-          (item) => item.coverImage || item.images?.[0],
-        )?.coverImage ??
-        dashboard.properties.find((item) => item.images?.[0])?.images?.[0]
-      );
-    }
-    if (title === "Food & Drinks") {
-      return dashboard.restaurants.find((item) => item.coverImage)
-        ?.coverImage as string | undefined;
-    }
-    return undefined;
-  };
-
   const latestActivity = dashboard.notifications.slice(0, 3);
-  const heroImage =
-    dashboard.properties.find(
-      (item) => item.coverImage || item.images?.[0],
-    )?.coverImage ??
-    dashboard.properties.find((item) => item.images?.[0])?.images?.[0] ??
-    dashboard.restaurants.find((item) => item.coverImage)?.coverImage;
+  const locationMapUrl = customerLocation
+    ? `https://www.openstreetmap.org/export/embed.html?${new URLSearchParams({
+        bbox: [
+          customerLocation.longitude - 0.015,
+          customerLocation.latitude - 0.01,
+          customerLocation.longitude + 0.015,
+          customerLocation.latitude + 0.01,
+        ].join(","),
+        layer: "mapnik",
+        marker: `${customerLocation.latitude},${customerLocation.longitude}`,
+      }).toString()}`
+    : null;
 
   const greeting = (() => {
     const hour = new Date().getHours();
@@ -385,176 +441,529 @@ export default function Home() {
   const submitSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const query = search.trim();
-    navigate(
-      query
-        ? `${ROUTES.SEARCH}?q=${encodeURIComponent(query)}`
-        : ROUTES.SEARCH,
+    const matchedDestination = destinations.find(
+      (destination) => destination.name.toLowerCase() === query.toLowerCase(),
+    );
+    const params = new URLSearchParams();
+    if (matchedDestination) params.set("town", matchedDestination.name);
+    else if (query) params.set("q", query);
+    navigate(params.size ? `${ROUTES.SEARCH}?${params.toString()}` : ROUTES.SEARCH);
+  };
+
+  const locateCustomer = () => {
+    setLocationError(null);
+    if (!navigator.geolocation) {
+      setLocationError("Location is not available in this browser.");
+      return;
+    }
+
+    setLocatingCustomer(true);
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        setCustomerLocation({
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+        });
+        setLocatingCustomer(false);
+      },
+      (error) => {
+        setLocationError(
+          error.code === error.PERMISSION_DENIED
+            ? "Location access was denied. Allow it in your browser settings to view the map."
+            : error.code === error.TIMEOUT
+              ? "Finding your location took too long. Please try again."
+              : "We couldn't determine your location. Please try again.",
+        );
+        setLocatingCustomer(false);
+      },
+      { enableHighAccuracy: false, maximumAge: 60_000, timeout: 10_000 },
     );
   };
 
   return (
     <div className="min-w-0 space-y-5">
-      <div className="min-w-0 space-y-5">
-        {failedSections.length > 0 && (
-          <div
-            role="alert"
-            className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[10px] text-amber-950 sm:flex-row sm:items-center sm:justify-between"
+      {failedSections.length > 0 && (
+        <div
+          role="alert"
+          className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[10px] text-amber-950 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <p>
+            Some live dashboard data could not be loaded:{" "}
+            <span className="font-semibold">{failedSections.join(", ")}</span>.
+          </p>
+          <button
+            type="button"
+            onClick={() => setReloadKey((key) => key + 1)}
+            className="inline-flex shrink-0 items-center gap-1 font-semibold underline underline-offset-2"
           >
-            <p>
-              Some live dashboard data could not be loaded:{" "}
-              <span className="font-semibold">
-                {failedSections.join(", ")}
-              </span>
-              .
-            </p>
-            <button
-              type="button"
-              onClick={() => setReloadKey((key) => key + 1)}
-              className="inline-flex shrink-0 items-center gap-1 font-semibold underline underline-offset-2"
-            >
-              Retry
-              <ArrowRight className="h-3 w-3" />
-            </button>
-          </div>
-        )}
+            Retry
+            <ArrowRight className="h-3 w-3" />
+          </button>
+        </div>
+      )}
 
-        <section className="relative isolate flex min-h-[290px] items-center overflow-hidden rounded-lg bg-[#302012] px-5 py-7 sm:min-h-[320px] sm:px-8">
-          <img
-            src={heroImage || "/hero-bg.jpg"}
-            alt=""
-            className="absolute inset-0 -z-20 h-full w-full object-cover object-center"
-          />
-          <div className="absolute inset-0 -z-10 bg-gradient-to-r from-[#24170e]/90 via-[#281b10]/75 to-[#281b10]/35" />
-          <div className="w-full max-w-[620px]">
-            <p className="text-xs font-semibold text-[#f4a332] sm:text-sm">
+      <section className="rounded-2xl border border-[#eadfce] bg-gradient-to-br from-[#fffaf2] via-white to-[#f3e7d5] px-5 py-6 sm:px-7">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.82fr)] xl:items-center">
+          <div>
+            <p className="text-xs font-semibold text-[#a56623] sm:text-sm">
               {greeting}
               {customer ? `, ${customer.firstName}` : ""}
             </p>
-            <h1 className="mt-2 max-w-[520px] text-4xl font-bold leading-[1.02] tracking-tight text-white sm:text-5xl">
-              Your Complete
-              <br />
-              Travel Companion
+            <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-text-primary sm:text-3xl">
+              Plan your next Kenya adventure
             </h1>
-            <p className="mt-3 flex flex-wrap gap-x-2 text-xs font-medium text-white/95 sm:text-sm">
-              <span>Accommodation</span>
-              <span>·</span>
-              <span>Food</span>
-              <span>·</span>
-              <span>Transport</span>
-              <span>·</span>
-              <span>Payments</span>
+            <p className="mt-1 text-sm text-text-muted">
+              Find a place to stay, somewhere to eat, or a ride to get there.
             </p>
-            <form
-              onSubmit={submitSearch}
-              className="mt-5 flex h-12 max-w-[620px] items-center gap-3 rounded-lg bg-white px-4 shadow-lg"
-            >
-              <MapPin className="h-5 w-5 shrink-0 text-[#41372e]" />
-              <div className="min-w-0 flex-1">
-                <label
-                  htmlFor="destination-search"
-                  className="block text-[11px] font-semibold text-[#30271f]"
-                >
-                  Where to?
-                </label>
-                <input
-                  id="destination-search"
-                  list="dashboard-destination-options"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search a town or destination"
-                  className="w-full bg-transparent text-xs text-[#30271f] outline-none placeholder:text-[#958c7f]"
-                />
-                <datalist id="dashboard-destination-options">
-                  {destinations.map((location) => (
-                    <option key={location._id} value={location.name} />
-                  ))}
-                </datalist>
-              </div>
-              <button
-                type="submit"
-                className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-[#f58216] px-4 text-xs font-semibold text-white transition hover:bg-[#dd6e0c]"
-              >
-                <Search className="h-3 w-3" />
-                Search
-              </button>
-            </form>
           </div>
-          <p className="absolute bottom-8 right-8 hidden -rotate-6 font-serif text-2xl italic leading-tight text-white drop-shadow-lg xl:block">
-            Explore
-            <br />
-            Kenya
-          </p>
+          <form
+            onSubmit={submitSearch}
+            className="flex min-h-12 max-w-[620px] items-center gap-3 rounded-xl border border-[#e7dac7] bg-white px-3 shadow-sm sm:px-4 xl:max-w-none"
+          >
+            <MapPin className="h-5 w-5 shrink-0 text-[#a56623]" />
+            <div className="min-w-0 flex-1">
+              <label
+                htmlFor="destination-search"
+                className="block text-[11px] font-semibold text-text-primary"
+              >
+                Search destinations
+              </label>
+              <input
+                id="destination-search"
+                list="dashboard-destination-options"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Town, destination, or experience"
+                className="w-full bg-transparent text-xs text-text-primary outline-none placeholder:text-text-muted"
+              />
+              <datalist id="dashboard-destination-options">
+                {destinations.map((location) => (
+                  <option key={location._id} value={location.name} />
+                ))}
+              </datalist>
+            </div>
+            <button
+              type="submit"
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-[#a75f1b] px-3 text-xs font-semibold text-white transition hover:bg-[#874a14] sm:px-4"
+            >
+              <Search className="h-3 w-3" />
+              Search
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <div className="grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-12">
+        <section className="overflow-hidden rounded-2xl border border-[#eadfce] bg-white lg:col-span-8">
+          <div className="flex items-center justify-between border-b border-[#f0e7dc] px-4 py-3 sm:px-5">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[.14em] text-[#a56623]">
+                Your plans
+              </p>
+              <h2 className="mt-0.5 text-base font-semibold text-text-primary">
+                Next up
+              </h2>
+            </div>
+            <Link
+              to={ROUTES.BOOKING}
+              className="inline-flex items-center gap-1 text-xs font-medium text-text-secondary hover:text-secondary-600"
+            >
+              All activity <ArrowRight className="h-3 w-3" />
+            </Link>
+          </div>
+          {loading ? (
+            <div className="m-4 h-20 animate-pulse rounded-xl bg-[#f5efe7] sm:m-5" />
+          ) : upcomingActivities[0] ? (
+            <Link
+              to={upcomingActivities[0].to}
+              className="flex items-center gap-4 p-4 transition hover:bg-[#fffaf2] sm:p-5"
+            >
+              {upcomingActivities[0].image ? (
+                <img
+                  src={upcomingActivities[0].image}
+                  alt=""
+                  className="h-16 w-16 shrink-0 rounded-xl object-cover sm:h-20 sm:w-20"
+                />
+              ) : (
+                <span className="grid h-16 w-16 shrink-0 place-items-center rounded-xl bg-[#f7ecdd] text-[#9b5b20] sm:h-20 sm:w-20">
+                  {upcomingActivities[0].to === ROUTES.TRIP ? (
+                    <Car className="h-6 w-6" />
+                  ) : upcomingActivities[0].to === ROUTES.ORDER ? (
+                    <Utensils className="h-6 w-6" />
+                  ) : (
+                    <Bed className="h-6 w-6" />
+                  )}
+                </span>
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-medium text-text-muted">
+                  {new Date(upcomingActivities[0].date).toLocaleDateString(
+                    "en-KE",
+                    { weekday: "long", day: "numeric", month: "long" },
+                  )}
+                </span>
+                <span className="mt-1 block truncate text-base font-semibold text-text-primary">
+                  {upcomingActivities[0].title}
+                </span>
+                <span className="mt-1 block truncate text-xs capitalize text-text-muted">
+                  {upcomingActivities[0].detail}
+                </span>
+              </span>
+              <span className="hidden shrink-0 items-center gap-2 sm:inline-flex">
+                <span className="rounded-full bg-[#e4f3e8] px-2.5 py-1 text-[10px] font-medium capitalize text-[#28744b]">
+                  {upcomingActivities[0].status.replace(/_/g, " ")}
+                </span>
+                <ArrowRight className="h-4 w-4 text-[#a56623]" />
+              </span>
+            </Link>
+          ) : (
+            <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+              <div>
+                <p className="text-sm font-semibold text-text-primary">
+                  Nothing planned yet
+                </p>
+                <p className="mt-1 text-xs text-text-muted">
+                  Start with a stay, a meal, or a ride for your next trip.
+                </p>
+              </div>
+              <Link
+                to={ROUTES.SEARCH}
+                className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-lg bg-[#a75f1b] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#874a14] sm:self-auto"
+              >
+                Start exploring <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+          )}
         </section>
 
-        <section>
+        <section className="flex min-h-full flex-col justify-between rounded-2xl bg-[#302012] p-5 text-white shadow-sm lg:col-span-4">
+          <div className="flex items-start justify-between gap-3">
+            <span>
+              <span className="block text-xs font-medium text-white/70">
+                Your wallet
+              </span>
+              <span className="mt-2 block text-2xl font-semibold tracking-tight">
+                {loading
+                  ? "Loading..."
+                  : dashboard.wallet
+                    ? formatCurrency(
+                        dashboard.wallet.balance,
+                        dashboard.wallet.currency,
+                      )
+                    : "Unavailable"}
+              </span>
+            </span>
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 text-[#f4bd6d]">
+              <CreditCard className="h-5 w-5" />
+            </span>
+          </div>
+          <Link
+            to={ROUTES.WALLET}
+            className="mt-6 inline-flex min-h-10 items-center justify-between rounded-lg border border-white/20 px-3 text-xs font-medium text-white transition hover:bg-white/10"
+          >
+            Manage wallet <ArrowRight className="h-4 w-4" />
+          </Link>
+        </section>
+
+        <section className="lg:col-span-8">
           <SectionHeading
-            title="Explore Our Services"
-            detail="Services and availability from our live marketplace."
+            title="What would you like to do?"
+            detail="Your travel essentials, all in one place."
           />
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {SERVICES.map(({ title, icon: Icon, to }) => {
-              const image = serviceImage(title);
               return (
                 <Link
                   key={title}
                   to={to}
-                  className="group relative flex min-h-[228px] flex-col overflow-hidden rounded-2xl border border-[#e9ddcc] bg-white shadow-[0_5px_18px_rgba(69,48,28,.05)] transition duration-200 hover:-translate-y-1 hover:border-[#d9bb91] hover:shadow-[0_14px_30px_rgba(69,48,28,.13)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#a66b2b]"
+                  className="group flex min-h-[88px] items-center gap-3 rounded-xl border border-[#eadfce] bg-white p-3 transition hover:border-[#d9bb91] hover:bg-[#fffaf2] hover:shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#a66b2b] sm:min-h-[96px] sm:p-4"
                 >
-                  <div className="relative h-[126px] shrink-0 overflow-hidden bg-gradient-to-br from-[#f4e7d4] via-[#f5eee3] to-[#e5cfad] sm:h-[142px]">
-                    {image ? (
-                      <img
-                        src={image}
-                        alt=""
-                        loading="lazy"
-                        className="h-full w-full object-cover transition duration-500 group-hover:scale-110"
-                      />
-                    ) : (
-                      <div className="relative flex h-full items-center justify-center overflow-hidden text-[#a66b2b]">
-                        <span className="absolute -right-5 -top-12 h-36 w-36 rounded-full border border-white/50" />
-                        <span className="absolute -bottom-20 -left-8 h-40 w-40 rounded-full border border-white/50" />
-                        <Icon className="relative h-12 w-12 opacity-80 transition duration-300 group-hover:scale-110 group-hover:rotate-[-5deg]" />
-                      </div>
-                    )}
-                    <span className="absolute inset-0 bg-gradient-to-t from-[#24170e]/35 via-transparent to-[#24170e]/10" />
-                    <span className="absolute right-3 top-3 grid size-9 place-items-center rounded-xl border border-white/50 bg-white/90 text-[#87531d] shadow-sm backdrop-blur-sm transition-transform group-hover:scale-105">
-                      <Icon className="h-[18px] w-[18px]" />
-                    </span>
-                  </div>
-                  <div className="flex flex-1 flex-col px-4 pb-4 pt-3.5">
-                    <p className="m-0 truncate text-sm font-semibold tracking-[-.01em] text-text-primary sm:text-base">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#f7ecdd] text-[#9b5b20] transition-colors group-hover:bg-[#f0dfc8]">
+                    <Icon className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs font-semibold text-text-primary sm:text-sm">
                       {title}
-                    </p>
-                    <p className="mb-3 mt-1.5 min-h-[18px] text-xs leading-relaxed text-text-muted">
+                    </span>
+                    <span className="mt-1 block truncate text-[10px] text-text-muted sm:text-xs">
                       {loading
                         ? "Finding what's available..."
                         : serviceCounts[title]}
-                    </p>
-                    <span className="mt-auto inline-flex items-center gap-1.5 text-xs font-semibold text-[#a45f19]">
-                      Explore service
-                      <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
                     </span>
-                  </div>
+                  </span>
                 </Link>
               );
             })}
           </div>
         </section>
 
-        <section>
+        <aside className="min-w-0 lg:col-span-4">
+          <section className="rounded-2xl border border-[#eadfce] bg-white p-4 sm:p-5 lg:h-full">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[.14em] text-[#a56623]">
+                  Travel at a glance
+                </p>
+                <h2 className="mt-1 text-sm font-semibold text-text-primary">
+                  Ready to explore
+                </h2>
+              </div>
+              <Link
+                to={ROUTES.SEARCH}
+                className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-[#a56623] hover:underline"
+              >
+                Explore <ArrowRight className="h-3 w-3" />
+              </Link>
+            </div>
+            <div className="mt-4 grid grid-cols-3 divide-x divide-[#f0e7dc] lg:mt-6">
+              {[
+                {
+                  label: "Stays",
+                  count: dashboard.totals.properties,
+                  icon: Bed,
+                },
+                {
+                  label: "Dining",
+                  count: dashboard.totals.restaurants,
+                  icon: Utensils,
+                },
+                {
+                  label: "Places",
+                  count: destinations.length,
+                  icon: MapPin,
+                },
+              ].map(({ label, count, icon: Icon }) => (
+                <div
+                  key={label}
+                  className="flex min-w-0 flex-col items-center px-1 text-center first:pl-0 last:pr-0"
+                >
+                  <Icon
+                    className="h-4 w-4 text-[#a56623]"
+                    aria-hidden="true"
+                  />
+                  <span className="mt-1 text-sm font-semibold text-text-primary">
+                    {loading ? "—" : count}
+                  </span>
+                  <span className="text-[10px] text-text-muted">{label}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        </aside>
+
+        <div className="grid min-w-0 grid-cols-1 gap-4 lg:col-span-12 lg:grid-cols-12 lg:items-stretch">
+        <aside className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-4 lg:col-start-9 lg:row-start-1 lg:flex lg:flex-col">
+          <section className="rounded-2xl border border-[#eadfce] bg-white p-4 sm:p-5 lg:flex-1">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[.14em] text-[#a56623]">
+                  Your plans
+                </p>
+                <h2 className="mt-1 text-sm font-semibold text-text-primary">
+                  Coming up
+                </h2>
+              </div>
+              <Link
+                to={ROUTES.BOOKING}
+                className="text-xs font-medium text-text-secondary hover:text-secondary-600"
+              >
+                View all
+              </Link>
+            </div>
+            {loading ? (
+              <div className="h-16 animate-pulse rounded-xl bg-[#f5efe7]" />
+            ) : upcomingActivities.length > 1 ? (
+              <div className="divide-y divide-[#f0e7dc]">
+                {upcomingActivities.slice(1, 3).map((activity) => (
+                  <Link
+                    key={`${activity.to}-${activity.id}`}
+                    to={activity.to}
+                    className="flex items-center gap-3 py-3 first:pt-1"
+                  >
+                    {activity.image ? (
+                      <img
+                        src={activity.image}
+                        alt=""
+                        className="h-11 w-11 shrink-0 rounded-lg object-cover"
+                      />
+                    ) : (
+                      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-[#f7ecdd] text-[#9b5b20]">
+                        {activity.to === ROUTES.TRIP ? (
+                          <Car className="h-4 w-4" />
+                        ) : activity.to === ROUTES.ORDER ? (
+                          <Utensils className="h-4 w-4" />
+                        ) : (
+                          <Bed className="h-4 w-4" />
+                        )}
+                      </span>
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-semibold text-text-primary">
+                        {activity.title}
+                      </span>
+                      <span className="mt-1 block truncate text-[11px] capitalize text-text-muted">
+                        {new Date(activity.date).toLocaleDateString("en-KE", {
+                          day: "numeric",
+                          month: "short",
+                        })}
+                        {activity.detail ? ` · ${activity.detail}` : ""}
+                      </span>
+                    </span>
+                    <ArrowRight className="h-4 w-4 shrink-0 text-[#a56623]" />
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-lg bg-[#faf6ef] px-3 py-3 text-xs leading-relaxed text-text-muted">
+                {upcomingActivities.length === 1
+                  ? "You’re all caught up. Your next plan is shown beside this card."
+                  : "New bookings, rides, and food orders will appear here."}
+              </p>
+            )}
+          </section>
+
+          <section className="min-h-[220px] rounded-2xl border border-[#eadfce] bg-white p-4 sm:p-5 lg:min-h-0 lg:flex-1">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-text-primary">
+                Recent updates
+              </h2>
+              <Link
+                to={ROUTES.NOTIFICATIONS}
+                className="text-[11px] font-medium text-text-secondary hover:text-secondary-600"
+              >
+                {loading ? "Loading" : `${dashboard.unreadNotifications} unread`}
+              </Link>
+            </div>
+            {loading ? (
+              <div className="h-12 animate-pulse rounded-lg bg-[#f5efe7]" />
+            ) : latestActivity.length > 0 ? (
+              <div className="divide-y divide-[#f0e7dc]">
+                {latestActivity.map((notification) => (
+                  <Link
+                    key={notification._id}
+                    to={ROUTES.NOTIFICATIONS}
+                    className="block py-3 first:pt-1"
+                  >
+                    <span className="flex items-center gap-2">
+                      <span
+                        className={`h-2 w-2 shrink-0 rounded-full ${
+                          notification.isRead
+                            ? "bg-[#d9d1c5]"
+                            : "bg-[#e88822]"
+                        }`}
+                      />
+                      <span className="truncate text-xs font-semibold text-text-primary">
+                        {notification.title}
+                      </span>
+                    </span>
+                    <span className="mt-1 block line-clamp-2 pl-4 text-[11px] leading-relaxed text-text-muted">
+                      {notification.body}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-lg bg-[#faf6ef] px-3 py-3 text-xs text-text-muted">
+                No notifications yet.
+              </p>
+            )}
+          </section>
+        </aside>
+
+          <section className="flex min-w-0 flex-col lg:col-span-8 lg:col-start-1 lg:row-start-1">
+            <SectionHeading
+              title="Explore nearby"
+              detail="See where you are on the map."
+            />
+            <div className="relative h-[300px] flex-none overflow-hidden rounded-2xl border border-[#eadfce] bg-[#f2eadc] lg:h-auto lg:min-h-[420px] lg:flex-1">
+              {locationMapUrl ? (
+                <iframe
+                  title="OpenStreetMap showing your current location"
+                  src={locationMapUrl}
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full border-0"
+                />
+              ) : (
+                <div className="relative flex h-full flex-col items-center justify-center overflow-hidden bg-[linear-gradient(135deg,#f6efe3,#e7dcc8)] px-4 text-center">
+                  <div
+                    aria-hidden="true"
+                    className="absolute inset-0 opacity-40 [background-image:linear-gradient(rgba(138,112,77,.12)_1px,transparent_1px),linear-gradient(90deg,rgba(138,112,77,.12)_1px,transparent_1px)] [background-size:28px_28px]"
+                  />
+                  <span className="relative grid h-11 w-11 place-items-center rounded-full border border-[#dfc9a8] bg-white text-[#a75f1b] shadow-sm">
+                    <MapPin className="h-5 w-5" />
+                  </span>
+                  <p className="relative mt-3 text-sm font-semibold text-text-primary">
+                    Find your place on the map
+                  </p>
+                  <p className="relative mt-1 max-w-[250px] text-[11px] leading-relaxed text-text-muted">
+                    After you allow access, your coordinates are sent to
+                    OpenStreetMap to display the map.
+                  </p>
+                  <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-2 p-3">
+                    <button
+                      type="button"
+                      onClick={locateCustomer}
+                      disabled={locatingCustomer}
+                      className="inline-flex min-h-9 items-center gap-2 rounded-lg bg-[#a75f1b] px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-[#874a14] disabled:cursor-wait disabled:opacity-70"
+                    >
+                      <MapPin className="h-3.5 w-3.5" />
+                      {locatingCustomer
+                        ? "Finding location..."
+                        : "Use my location"}
+                    </button>
+                    {locationError && (
+                      <p
+                        role="alert"
+                        className="rounded-md bg-white/95 px-2 py-1 text-[10px] text-red-700 shadow-sm"
+                      >
+                        {locationError}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            {locationMapUrl && (
+              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[10px] text-text-muted">
+                  Map provided by OpenStreetMap.
+                </p>
+                <button
+                  type="button"
+                  onClick={locateCustomer}
+                  disabled={locatingCustomer}
+                  className="text-[11px] font-medium text-[#a56623] hover:underline disabled:opacity-60"
+                >
+                  {locatingCustomer
+                    ? "Updating location..."
+                    : "Refresh my location"}
+                </button>
+                {locationError && (
+                  <p role="alert" className="w-full text-[10px] text-red-700">
+                    {locationError}
+                  </p>
+                )}
+              </div>
+            )}
+          </section>
+        </div>
+
+        <section className="lg:col-span-12">
           <SectionHeading
-            title="Featured Stays & Dining"
+            title="Featured stays & dining"
             detail="Highly rated stays and restaurants from our partners."
             action="View all"
             to={ROUTES.SEARCH}
           />
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2">
             {featured.map((stay) => (
               <Link
                 key={`${stay.to}-${stay.id}`}
                 to={stay.to}
-                className="group overflow-hidden rounded-lg border border-[#eadfce] bg-white/70 transition hover:-translate-y-0.5 hover:shadow-md"
+                className="group w-[min(82vw,260px)] shrink-0 snap-start overflow-hidden rounded-xl border border-[#eadfce] bg-white/70 transition hover:-translate-y-0.5 hover:shadow-md sm:w-[250px]"
               >
-                <div className="relative flex h-[120px] items-center justify-center overflow-hidden bg-[#f2e9dc] sm:h-[150px]">
+                <div className="relative flex h-[132px] items-center justify-center overflow-hidden bg-[#f2e9dc]">
                   {stay.image ? (
                     <img
                       src={stay.image}
@@ -592,13 +1001,19 @@ export default function Home() {
                       </span>
                     )}
                   </p>
-                  {stay.price !== undefined && stay.currency && (
+                  {stay.kind === "accommodation" && (
                     <p className="text-[11px] font-semibold text-text-primary">
-                      {formatCurrency(stay.price, stay.currency)}
-                      <span className="font-normal text-text-muted">
-                        {" "}
-                        / night
-                      </span>
+                      {stay.price !== undefined && stay.currency ? (
+                        <>
+                          From {formatCurrency(stay.price, stay.currency)}
+                          <span className="font-normal text-text-muted">
+                            {" "}
+                            / night
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-[#a45f19]">View room rates</span>
+                      )}
                     </p>
                   )}
                 </div>
@@ -608,11 +1023,11 @@ export default function Home() {
               Array.from({ length: 4 }, (_, index) => (
                 <div
                   key={`featured-skeleton-${index}`}
-                  className="h-[220px] animate-pulse rounded-lg border border-[#eadfce] bg-white/60"
+                  className="h-[220px] w-[250px] shrink-0 animate-pulse rounded-xl border border-[#eadfce] bg-white/60"
                 />
               ))}
             {!loading && featured.length === 0 && (
-              <div className="col-span-full rounded-lg border border-dashed border-[#dfd1bd] bg-white/50 px-4 py-6 text-center text-[10px] text-text-muted">
+              <div className="w-full shrink-0 rounded-lg border border-dashed border-[#dfd1bd] bg-white/50 px-4 py-6 text-center text-[10px] text-text-muted">
                 New stays and experiences are coming soon. Try exploring all
                 destinations.
                 <Link
@@ -626,10 +1041,10 @@ export default function Home() {
           </div>
         </section>
 
-        <section>
+        <section className="lg:col-span-12">
           <SectionHeading
-            title="Explore Destinations"
-            detail="Operational locations fetched from the travel network."
+            title="Popular destinations"
+            detail="Choose a place to start exploring."
             action="Search places"
             to={ROUTES.SEARCH}
           />
@@ -671,235 +1086,33 @@ export default function Home() {
           )}
         </section>
 
-        <section className="relative flex min-h-[92px] items-center justify-between gap-3 overflow-hidden rounded-lg bg-[#392616] px-5 py-4 text-white sm:min-h-[108px]">
-          <div className="absolute inset-0 bg-gradient-to-r from-[#25170e] via-[#593719] to-[#25170e]" />
-          <div className="relative grid flex-1 grid-cols-2 gap-4 sm:grid-cols-4">
-            {[
-              {
-                icon: Bed,
-                title: loading ? "…" : String(dashboard.totals.properties),
-                sub: "Stays & lodges",
-              },
-              {
-                icon: Utensils,
-                title: loading
-                  ? "…"
-                  : String(dashboard.totals.restaurants),
-                sub: "Dining partners",
-              },
-              {
-                icon: MapPin,
-                title: loading ? "…" : String(destinations.length),
-                sub: "Available towns",
-              },
-              {
-                icon: CreditCard,
-                title: dashboard.wallet
-                  ? formatCurrency(
-                      dashboard.wallet.balance,
-                      dashboard.wallet.currency,
-                    )
-                  : loading
-                    ? "…"
-                    : "—",
-                sub: "Wallet balance",
-              },
-            ].map(({ icon: Icon, title, sub }) => (
-              <div key={sub} className="flex items-center gap-3">
-                <Icon className="h-5 w-5 shrink-0 text-[#f7a12c]" />
-                <span className="min-w-0 text-[11px] leading-tight sm:text-xs">
-                  <span className="block truncate font-semibold">{title}</span>
-                  <span className="mt-1 block text-white/75">{sub}</span>
-                </span>
-              </div>
-            ))}
+        <section className="relative isolate flex flex-col gap-5 overflow-hidden rounded-2xl bg-[#302012] px-5 py-5 text-white sm:flex-row sm:items-center sm:justify-between sm:px-7 lg:col-span-12">
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top_right,rgba(191,122,53,.34),transparent_48%),linear-gradient(110deg,#302012,#49301b)]"
+          />
+          <div className="flex items-start gap-4">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-white/15 bg-white/10 text-[#f4bd6d]">
+              <MessageCircle className="h-5 w-5" />
+            </span>
+            <span>
+              <span className="block text-base font-semibold">
+                Need a hand planning your trip?
+              </span>
+              <span className="mt-1 block max-w-xl text-xs leading-relaxed text-white/70 sm:text-sm">
+                Ask our Concierge for help finding stays, dining, and transport
+                that fit your plans.
+              </span>
+            </span>
           </div>
+          <Link
+            to={ROUTES.AI_CONCIERGE}
+            className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 self-start rounded-lg bg-[#f4bd6d] px-4 text-xs font-semibold text-[#302012] transition hover:bg-[#ffd18e] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white sm:self-auto"
+          >
+            Talk to Concierge <ArrowRight className="h-4 w-4" />
+          </Link>
         </section>
       </div>
-
-      <aside className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <section className="rounded-xl border border-[#eadfce] bg-white/75 p-4">
-          <h2 className="mb-3 text-sm font-semibold text-text-primary">
-            Quick Actions
-          </h2>
-          <div className="grid grid-cols-2 gap-2">
-            {QUICK_ACTIONS.map(({ title, icon: Icon, to }) => (
-              <Link
-                key={title}
-                to={to}
-                className="flex min-h-[84px] flex-col items-center justify-center gap-2 rounded-lg border border-[#f0e7dc] bg-[#fffdf9] px-2 py-3 text-center transition hover:border-[#e9bd8a] hover:bg-[#fff7ed]"
-              >
-                <Icon className="h-5 w-5 text-[#f47725]" />
-                <span className="max-w-full text-[11px] font-medium leading-tight text-text-primary">
-                  {title}
-                </span>
-              </Link>
-            ))}
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-[#eadfce] bg-white/75 p-4">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-text-primary">
-              Your Trips & Activities
-            </h2>
-            <Link
-              to={ROUTES.BOOKING}
-              className="inline-flex shrink-0 items-center gap-1 text-[10px] text-text-secondary hover:text-secondary-600"
-            >
-              View all <ArrowRight className="h-2.5 w-2.5" />
-            </Link>
-          </div>
-          {loading ? (
-            <div className="space-y-2 border-t border-[#f0e7dc] py-2">
-              {[0, 1].map((item) => (
-                <div
-                  key={`trip-skeleton-${item}`}
-                  className="h-12 animate-pulse rounded-md bg-[#f5efe7]"
-                />
-              ))}
-            </div>
-          ) : upcomingActivities.length > 0 ? (
-            <div className="divide-y divide-[#f0e7dc]">
-              {upcomingActivities.map((activity) => (
-                <Link
-                  key={`${activity.to}-${activity.id}`}
-                  to={activity.to}
-                  className="flex gap-3 py-3"
-                >
-                  {activity.image ? (
-                    <img
-                      src={activity.image}
-                      alt=""
-                      className="h-14 w-16 shrink-0 rounded-md object-cover"
-                    />
-                  ) : (
-                    <span className="flex h-14 w-16 shrink-0 items-center justify-center rounded-md bg-[#f3e8d9] text-[#8e632f]">
-                      {activity.to === ROUTES.TRIP ? (
-                        <Car className="h-4 w-4" />
-                      ) : (
-                        <Bed className="h-4 w-4" />
-                      )}
-                    </span>
-                  )}
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[11px] font-semibold text-text-primary">
-                      {activity.title}
-                    </span>
-                    <span className="mt-1 block truncate text-[10px] text-text-muted">
-                      {new Date(activity.date).toLocaleDateString("en-KE", {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                      {activity.detail ? ` · ${activity.detail}` : ""}
-                    </span>
-                    <span className="mt-1.5 inline-flex rounded-full bg-[#e4f3e8] px-2 py-0.5 text-[9px] font-medium capitalize text-[#28744b]">
-                      {activity.status.replace(/_/g, " ")}
-                    </span>
-                  </span>
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <div className="border-t border-[#f0e7dc] py-4">
-              <p className="text-[11px] font-medium text-text-primary">
-                No upcoming trips yet
-              </p>
-              <p className="mt-1 text-[10px] leading-relaxed text-text-muted">
-                Find a stay or experience for your next Kenya adventure.
-              </p>
-              <Link
-                to={ROUTES.SEARCH}
-                className="mt-2 inline-flex items-center gap-1 text-[10px] font-semibold text-[#bd681f]"
-              >
-                Explore stays <ArrowRight className="h-2.5 w-2.5" />
-              </Link>
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-xl border border-[#eadfce] bg-white/75 p-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#f3e5d2] text-[#a66b2b]">
-                <CreditCard className="h-3.5 w-3.5" />
-              </span>
-              <span>
-                <span className="block text-[10px] font-medium text-text-muted">
-                  Wallet balance
-                </span>
-                <span className="block text-sm font-semibold text-text-primary">
-                  {loading
-                    ? "Loading..."
-                    : dashboard.wallet
-                      ? formatCurrency(
-                          dashboard.wallet.balance,
-                          dashboard.wallet.currency,
-                        )
-                      : "Unavailable"}
-                </span>
-              </span>
-            </div>
-            <Link
-              to={ROUTES.WALLET}
-              className="rounded-full border border-[#e9dfd2] px-3 py-1.5 text-[10px] font-medium text-text-secondary hover:bg-[#f8f2e9]"
-            >
-              Wallet
-            </Link>
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-[#eadfce] bg-white/75 p-4">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-text-primary">
-              Recent updates
-            </h2>
-            <Link
-              to={ROUTES.NOTIFICATIONS}
-              className="text-[10px] text-text-secondary hover:text-secondary-600"
-            >
-              {loading ? "Loading" : `${dashboard.unreadNotifications} unread`}
-            </Link>
-          </div>
-          {loading ? (
-            <div className="h-12 animate-pulse rounded-md bg-[#f5efe7]" />
-          ) : latestActivity.length > 0 ? (
-            <div className="space-y-2">
-              {latestActivity.map((notification) => (
-                <Link
-                  key={notification._id}
-                  to={ROUTES.NOTIFICATIONS}
-                  className="block border-t border-[#f0e7dc] pt-3"
-                >
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                        notification.isRead ? "bg-[#d9d1c5]" : "bg-[#e88822]"
-                      }`}
-                    />
-                    <span className="truncate text-[11px] font-semibold text-text-primary">
-                      {notification.title}
-                    </span>
-                  </span>
-                  <span className="mt-1 block line-clamp-2 text-[10px] leading-relaxed text-text-muted">
-                    {notification.body}
-                  </span>
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <p className="border-t border-[#f0e7dc] pt-3 text-[10px] text-text-muted">
-              No notifications yet.
-            </p>
-          )}
-        </section>
-
-        <div className="flex min-h-[104px] items-center gap-4 rounded-xl border border-[#eadfce] bg-[#f7efe4] px-5 py-5 text-sm leading-relaxed text-text-secondary sm:col-span-2 xl:col-span-4">
-          <ShieldCheck className="h-6 w-6 shrink-0 text-[#a86b27]" />
-          Trusted local partners, 24/7 support and secure bookings.
-        </div>
-      </aside>
     </div>
   );
 }

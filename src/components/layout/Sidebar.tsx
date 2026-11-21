@@ -64,15 +64,15 @@ export default function Sidebar({ groups }: SidebarProps) {
 
   return (
     <aside
-      className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-white/10 bg-[#21170f] text-white lg:flex"
+      className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-white/10 bg-[#2b1d13] text-white lg:flex"
       style={{
         backgroundImage:
-          "linear-gradient(180deg,rgba(30,20,13,.97) 0%,rgba(34,22,13,.91) 42%,rgba(31,19,11,.72) 100%),url('/hero-bg.jpg')",
+          "linear-gradient(180deg,rgba(43,30,19,.91) 0%,rgba(44,30,18,.86) 42%,rgba(40,26,16,.78) 100%),url('/hero-bg.jpg')",
         backgroundPosition: "center, center bottom",
         backgroundSize: "cover",
       }}
     >
-      <div className="flex h-24 shrink-0 items-center border-b border-white/10 px-4">
+      <div className="flex h-24 shrink-0 items-center px-4">
         <Link
           to="/"
           className="group flex min-w-0 items-center gap-3 rounded-xl px-1 py-2"

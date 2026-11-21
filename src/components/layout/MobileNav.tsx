@@ -16,9 +16,11 @@ import {
   Star,
   Bell,
   User,
+  Menu,
 } from "lucide-react";
 import { classNames } from "../../utils/helpers";
 import { useBranding } from "../../context/brandingContext";
+import { ROUTES } from "../../utils/constants";
 
 interface NavItem {
   label: string;
@@ -35,6 +37,7 @@ interface NavGroup {
 interface MobileNavProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenMenu: () => void;
   groups: NavGroup[];
 }
 
@@ -60,6 +63,7 @@ const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
 export default function MobileNav({
   isOpen,
   onClose,
+  onOpenMenu,
   groups,
 }: MobileNavProps) {
   const { branding } = useBranding();
@@ -67,6 +71,13 @@ export default function MobileNav({
     branding.metaTitle?.split("—")[0]?.trim() || "Digital Safaris";
   const logoUrl = branding.logoUrl || branding.logo || "/logo.png";
   const logoAppearance = branding.logoAppearance;
+  const primaryItems = [
+    { label: "Home", to: ROUTES.HOME, icon: Home, end: true },
+    { label: "Search", to: ROUTES.SEARCH, icon: Compass },
+    { label: "Bookings", to: ROUTES.BOOKING, icon: Calendar },
+    { label: "Trips", to: ROUTES.TRIP, icon: Route },
+    { label: "Profile", to: ROUTES.PROFILE, icon: User },
+  ];
 
   return (
     <div
@@ -75,6 +86,39 @@ export default function MobileNav({
         isOpen ? "pointer-events-auto" : "pointer-events-none"
       )}
     >
+      <nav
+        aria-label="Quick navigation"
+        className="pointer-events-auto fixed inset-x-0 bottom-0 z-[901] grid grid-cols-6 border-t border-[#e4d7c2] bg-[#fffaf1]/95 px-1 pb-[env(safe-area-inset-bottom)] pt-1.5 shadow-[0_-5px_20px_rgba(54,37,20,.08)] backdrop-blur lg:hidden"
+      >
+        {primaryItems.map(({ label, to, icon: Icon, end }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={end}
+            className={({ isActive }) =>
+              classNames(
+                "flex min-h-12 flex-col items-center justify-center gap-1 rounded-lg px-1 text-[9px] font-medium transition-colors",
+                isActive
+                  ? "text-[#9b5518]"
+                  : "text-[#806d57] hover:bg-[#f2e5cf] hover:text-[#5c3a1c]"
+              )
+            }
+          >
+            <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
+            {label}
+          </NavLink>
+        ))}
+        <button
+          type="button"
+          onClick={onOpenMenu}
+          aria-label="Open all navigation"
+          className="flex min-h-12 flex-col items-center justify-center gap-1 rounded-lg px-1 text-[9px] font-medium text-[#806d57] transition-colors hover:bg-[#f2e5cf] hover:text-[#5c3a1c]"
+        >
+          <Menu className="h-[18px] w-[18px]" aria-hidden="true" />
+          More
+        </button>
+      </nav>
+
       <div
         className={classNames(
           "absolute inset-0 bg-black/50 transition-opacity",

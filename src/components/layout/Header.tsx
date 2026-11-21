@@ -1,46 +1,75 @@
-import { Link } from "react-router-dom";
-import { Menu, Search, Bell, Compass } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
+import { Menu, Bell, Sparkles } from "lucide-react";
 import { useAuth } from "../../context/authContext";
 import { useBranding } from "../../context/brandingContext";
 import { ROUTES } from "../../utils/constants";
 import Avatar from "../ui/Avatar";
+
+const PAGE_LABELS = [
+  [ROUTES.HOME, "Overview"],
+  [ROUTES.SEARCH, "Explore"],
+  [ROUTES.ACCOMMODATION, "Stays"],
+  [ROUTES.RESTAURANT, "Dining"],
+  [ROUTES.TRANSPORT, "Transport"],
+  [ROUTES.BOOKING, "Bookings"],
+  [ROUTES.ORDER, "Orders"],
+  [ROUTES.TRIP, "Trips"],
+  [ROUTES.TRACKING, "Tracking"],
+  [ROUTES.AI_CONCIERGE, "Concierge"],
+  [ROUTES.BROADCAST, "Requests"],
+  [ROUTES.WALLET, "Wallet"],
+  [ROUTES.PAYMENT, "Payments"],
+  [ROUTES.REVIEWS, "Reviews"],
+  [ROUTES.NOTIFICATIONS, "Notifications"],
+  [ROUTES.PROFILE, "Profile"],
+] as const;
 
 interface HeaderProps {
   title?: string;
   onMenuClick?: () => void;
 }
 
-export default function Header({ onMenuClick }: HeaderProps) {
+export default function Header({ title, onMenuClick }: HeaderProps) {
   const { customer } = useAuth();
   const { branding } = useBranding();
+  const { pathname } = useLocation();
 
   const appName =
     branding.metaTitle?.split("—")[0]?.trim() || "Digital Safaris";
   const logoUrl = branding.logoUrl || branding.logo || "/logo.png";
   const logoAppearance = branding.logoAppearance;
+  const currentTitle =
+    title ||
+    PAGE_LABELS.find(
+      ([path]) => pathname === path || pathname.startsWith(`${path}/`),
+    )?.[1] ||
+    "Travel";
+  const hour = new Date().getHours();
+  const greeting =
+    hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
 
   return (
-    <header className="sticky top-0 z-40 border-b border-[#e4d7c2] bg-[#fffaf1]/95 backdrop-blur">
-      <div className="flex h-14 items-center gap-3 px-3 sm:px-4">
+    <header className="sticky top-0 z-40 border-b border-[#eadfce] bg-[#fffdf9]/95 backdrop-blur">
+      <div className="flex h-16 items-center gap-3 px-3 sm:px-5 lg:px-7">
         <button
           type="button"
           onClick={onMenuClick}
-          className="rounded-md p-2 text-[#765a39] hover:bg-[#f2e5cf] lg:hidden"
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-[#765a39] transition hover:bg-[#f5ecdf] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#a75f1b] lg:hidden"
           aria-label="Open menu"
         >
           <Menu className="h-5 w-5" />
         </button>
 
-        <Link to="/" className="lg:hidden">
+        <Link to="/" aria-label={appName} className="lg:hidden">
           <img
             src={logoUrl}
-            alt={appName}
-            className="h-8 w-8 rounded-xl border border-[#dda24c]/60 object-cover shadow-sm"
+            alt=""
+            className="h-9 w-9 rounded-xl border border-[#dda24c]/50 bg-white object-cover shadow-sm"
             style={logoAppearance ? {
               maxWidth: `${logoAppearance.maxWidth}px`,
               maxHeight: `${logoAppearance.maxHeight}px`,
-              width: `${Math.min(32, logoAppearance.maxWidth)}px`,
-              height: `${Math.min(32, logoAppearance.maxHeight)}px`,
+              width: `${Math.min(36, logoAppearance.maxWidth)}px`,
+              height: `${Math.min(36, logoAppearance.maxHeight)}px`,
               objectFit: logoAppearance.fit,
               padding: `${logoAppearance.padding}px`,
               borderRadius: `${logoAppearance.borderRadius}px`,
@@ -48,43 +77,71 @@ export default function Header({ onMenuClick }: HeaderProps) {
           />
         </Link>
 
-        <div className="hidden flex-1 items-center md:flex">
-          <div className="relative w-full max-w-md">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-            <input
-              type="text"
-              placeholder="Search destinations, experiences, or services..."
-              className="w-full rounded-full border border-[#e4d7c2] bg-[#f8f1e5] py-2.5 pl-10 pr-4 text-sm text-text-primary placeholder:text-text-muted focus:border-secondary-500 focus:outline-none focus:ring-2 focus:ring-secondary-500/30"
+        <div className="hidden min-w-0 flex-1 items-center gap-3 md:flex">
+          <span className="relative grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-xl border border-[#e7d4b8] bg-gradient-to-br from-[#fff7e8] to-[#f2dfc2] text-[#a56623] shadow-sm">
+            <span
+              aria-hidden="true"
+              className="absolute -right-2 -top-2 h-7 w-7 rounded-full bg-white/70"
             />
-          </div>
+            <Sparkles className="relative h-[18px] w-[18px]" />
+          </span>
+          <span className="min-w-0">
+            <span className="flex items-center gap-2">
+              <span className="truncate text-sm font-semibold leading-tight text-text-primary">
+                {greeting}
+                {customer ? (
+                  <>
+                    ,{" "}
+                    <span className="text-[#a56623]">
+                      {customer.firstName}
+                    </span>
+                  </>
+                ) : (
+                  " — your travel space"
+                )}
+              </span>
+            </span>
+            <span className="mt-1 flex items-center gap-1.5 text-[10px] leading-tight text-text-muted">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#c98a42]" />
+              <span className="font-medium text-[#94724b]">{currentTitle}</span>
+              <span aria-hidden="true">·</span>
+              <span>Your journey, all in one place</span>
+            </span>
+          </span>
         </div>
 
-        <div className="flex-1 md:hidden" />
+        <div className="flex-1 md:hidden">
+          <p className="truncate text-sm font-semibold text-text-primary">
+            {currentTitle}
+          </p>
+        </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
           <Link
             to={ROUTES.NOTIFICATIONS}
-            className="relative rounded-md p-2 text-[#765a39] hover:bg-[#f2e5cf]"
+            className="relative grid h-10 w-10 place-items-center rounded-xl border border-[#eadfce] bg-white text-[#765a39] transition hover:border-[#d9c4a4] hover:bg-[#fffaf2] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#a75f1b]"
             aria-label="Notifications"
           >
-            <Bell className="h-5 w-5" />
-            <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-secondary-500" />
+            <Bell className="h-[18px] w-[18px]" />
+            <span className="absolute right-2 top-2 h-2 w-2 rounded-full border-2 border-white bg-[#d97722]" />
           </Link>
 
           {customer ? (
             <Link
               to={ROUTES.PROFILE}
-              className="ml-1 flex items-center gap-2 rounded-full py-1 pr-3 pl-1 hover:bg-[#f2e5cf]"
+              className="flex items-center gap-2 rounded-xl border border-transparent py-1 pl-1 pr-2 transition hover:border-[#eadfce] hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#a75f1b] sm:gap-2.5 sm:pl-2 sm:pr-3"
             >
               <Avatar
                 src={customer.avatar ?? undefined}
                 fallback={`${customer.firstName} ${customer.lastName}`}
                 size="sm"
               />
-              <span className="hidden text-xs sm:block">
-                <span className="block text-text-muted">Good morning,</span>
-                <span className="block font-medium text-text-primary">
-                  {customer.firstName}
+              <span className="hidden min-w-0 text-left sm:block">
+                <span className="block text-[10px] leading-tight text-text-muted">
+                  Signed in as
+                </span>
+                <span className="mt-0.5 block max-w-28 truncate text-xs font-semibold leading-tight text-text-primary">
+                  {customer.firstName} {customer.lastName}
                 </span>
               </span>
             </Link>

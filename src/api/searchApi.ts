@@ -70,8 +70,14 @@ const searchApi = {
     return unwrapList<MenuItem>(res.data);
   },
 
-  async locations(params?: ListParams): Promise<Location[]> {
-    const res = await axios.get("/customer/search/locations", { params });
+  async locations(
+    params?: ListParams,
+    signal?: AbortSignal
+  ): Promise<Location[]> {
+    const res = await axios.get("/customer/search/locations", {
+      params,
+      signal,
+    });
     return unwrap<Location[]>(res.data);
   },
 
